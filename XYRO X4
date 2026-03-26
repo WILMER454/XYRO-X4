@@ -1,0 +1,909 @@
+-- ==============================================
+-- BY XYRO Modified Kill Aura Script
+-- Version: 4.2 - 4X FASTER EDITION + ANTI-RAGDOLL
+-- Features:
+-- 1. 2X FASTER APS Control: 1-3000 attacks per second (was 1500)
+-- 2. Range Control: 1-350 studs
+-- 3. Professional Modern GUI
+-- 4. Target Specific Player by Name (NOW WITH COMMA-SEPARATED NAMES)
+-- 5. Toggle Script On/Off with E key (ADDED)
+-- 6. Enhanced Error Handling & Performance
+-- 7. AVOID PLAYERS FEATURE (NEW!)
+-- 8. ANTI-RAGDOLL SYSTEM (NEW!)
+-- 9. GRAB/FALL FIXES (NEW!)
+-- 10. ANTI-FLING SYSTEM (NEW!)
+-- 11. HEAD SIT with SEPARATE TARGET LIST (NEW!)
+-- 12. SIMULTANEOUS MULTI-TARGET (NEW!)
+-- ==============================================
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TextService = game:GetService("TextService")
+
+-- Player reference
+local player = Players.LocalPlayer
+
+-- Script State
+local ScriptEnabled = false
+local originalSizes = {}
+local auraConnection = nil
+local antiRagdollConnection = nil
+local antiFlingConnection = nil
+local lastAttackTime = 0
+local targetPlayerNames = ""
+local headSitPlayerNames = ""  -- NEW
+local avoidPlayerNames = ""
+local targetList = {}
+local headSitTargetList = {}   -- NEW
+local avoidList = {}
+local isCharacterSafe = true
+
+-- Configuration - 4X FASTER!
+local attacksPerSecond = 800
+local attackCooldown = 1 / attacksPerSecond
+local attackRange = 60
+
+-- Remote paths
+local HitRemote = game:GetService("ReplicatedStorage")
+    :WaitForChild("Packages")
+    :WaitForChild("Knit")
+    :WaitForChild("Services")
+    :WaitForChild("CombatService")
+    :WaitForChild("RF")
+    :WaitForChild("Hit")
+
+-- ==================== HELPER FUNCTIONS ====================
+local function updateTargetList()
+    targetList = {}
+    if targetPlayerNames == "" then return end
+    
+    for name in targetPlayerNames:gmatch("[^,]+") do
+        local trimmedName = name:gsub("^%s*(.-)%s*$", "%1")
+        if trimmedName ~= "" then
+            targetList[trimmedName:lower()] = true
+        end
+    end
+end
+
+-- NEW: Head sit target list
+local function updateHeadSitTargetList()
+    headSitTargetList = {}
+    if headSitPlayerNames == "" then return end
+    
+    for name in headSitPlayerNames:gmatch("[^,]+") do
+        local trimmedName = name:gsub("^%s*(.-)%s*$", "%1")
+        if trimmedName ~= "" then
+            headSitTargetList[trimmedName:lower()] = true
+        end
+    end
+end
+
+local function updateAvoidList()
+    avoidList = {}
+    if avoidPlayerNames == "" then return end
+    
+    for name in avoidPlayerNames:gmatch("[^,]+") do
+        local trimmedName = name:gsub("^%s*(.-)%s*$", "%1")
+        if trimmedName ~= "" then
+            avoidList[trimmedName:lower()] = true
+        end
+    end
+end
+
+-- ==================== ANTI-FLING SYSTEM ====================
+local function setupAntiFling()
+    if antiFlingConnection then antiFlingConnection:Disconnect() end
+    antiFlingConnection = RunService.Heartbeat:Connect(function()
+        if not player.Character then return end
+        local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then return end
+        
+        local velocity = humanoidRootPart.Velocity
+        local speed = velocity.Magnitude
+        
+        if speed > 100 then
+            humanoidRootPart.Velocity = velocity * 0.8
+            local antiForce = -velocity.Unit * math.min(speed * 0.5, 200)
+            humanoidRootPart.Velocity = humanoidRootPart.Velocity + antiForce
+        end
+        
+        local angularVelocity = humanoidRootPart.AssemblyAngularVelocity
+        if angularVelocity.Magnitude > 20 then
+            humanoidRootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    end)
+end
+
+-- ==================== ANTI-RAGDOLL SYSTEM ====================
+local function setupAntiRagdoll()
+    if antiRagdollConnection then antiRagdollConnection:Disconnect() end
+    antiRagdollConnection = RunService.Heartbeat:Connect(function()
+        if not player.Character then return end
+        
+        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+        
+        if humanoid:GetState() == Enum.HumanoidStateType.FallingDown or 
+           humanoid:GetState() == Enum.HumanoidStateType.Ragdoll then
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+        
+        if humanoid.Health <= 0 then
+            humanoid.Health = 1
+        end
+    end)
+end
+
+-- ==================== GRAB/FALL FIXES ====================
+local function setupGrabFallFixes()
+    local character = player.Character
+    if not character then return end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    local lastYPosition = humanoidRootPart.Position.Y
+    local fallStartTime = 0
+    local isFalling = false
+    
+    RunService.Heartbeat:Connect(function()
+        if not character or not humanoidRootPart then return end
+        
+        local currentY = humanoidRootPart.Position.Y
+        local velocity = humanoidRootPart.Velocity.Y
+        
+        if velocity < -50 and currentY < lastYPosition then
+            if not isFalling then
+                isFalling = true
+                fallStartTime = tick()
+            end
+            
+            if tick() - fallStartTime > 0.5 then
+                humanoidRootPart.Velocity = Vector3.new(
+                    humanoidRootPart.Velocity.X,
+                    math.max(velocity, -50),
+                    humanoidRootPart.Velocity.Z
+                )
+                
+                if currentY > 1000 then
+                    humanoidRootPart.CFrame = CFrame.new(
+                        humanoidRootPart.Position.X,
+                        100,
+                        humanoidRootPart.Position.Z
+                    )
+                end
+            end
+        else
+            isFalling = false
+        end
+        
+        lastYPosition = currentY
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if humanoid.PlatformStand then
+                humanoid.PlatformStand = false
+            end
+            if humanoid.Sit then
+                humanoid.Sit = false
+            end
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+end
+
+-- ==================== CHARACTER SAFETY SYSTEM ====================
+local function ensureCharacterSafety()
+    if not player.Character then return end
+    
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        if humanoid.Health <= 0 then
+            humanoid.Health = 100
+        end
+        
+        humanoid.AutoRotate = true
+        humanoid.AutoJumpEnabled = true
+        
+        if humanoid.WalkSpeed < 16 then
+            humanoid.WalkSpeed = 16
+        end
+    end
+end
+
+-- ==================== PROFESSIONAL GUI CREATOR ====================
+local function CreateProfessionalGUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "PAIN_MODIFIED_GUI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Size = UDim2.new(0, 400, 0, 700)  -- Taller for head sit box
+    MainFrame.Position = UDim2.new(0.5, -200, 0.5, -350)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = true
+    MainFrame.Parent = ScreenGui
+    
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 16)
+    UICorner.Parent = MainFrame
+    
+    local UIGradient = Instance.new("UIGradient")
+    UIGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(25, 25, 25)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 12, 12))
+    }
+    UIGradient.Rotation = 90
+    UIGradient.Parent = MainFrame
+    
+    local UIStroke = Instance.new("UIStroke")
+    UIStroke.Color = Color3.fromRGB(45, 45, 45)
+    UIStroke.Transparency = 0.2
+    UIStroke.Thickness = 2
+    UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    UIStroke.Parent = MainFrame
+    
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Size = UDim2.new(1, 0, 0, 50)
+    TitleBar.BackgroundTransparency = 1
+    TitleBar.Parent = MainFrame
+    local Logo = Instance.new("ImageLabel")
+    Logo.Size = UDim2.new(0, 40, 0, 40)
+    Logo.Position = UDim2.new(0, 5, 0, 5)
+    Logo.BackgroundTransparency = 1
+    Logo.Image = "rbxassetid://10341849885"
+    Logo.Parent = TitleBar
+    
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(0.7, 0, 1, 0)
+    Title.Position = UDim2.new(0, 50, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "XYRO X4"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 24
+    Title.Font = Enum.Font.GothamBold
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = TitleBar
+    
+    local TitleGradient = Instance.new("UIGradient")
+    TitleGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 100, 255))
+    }
+    TitleGradient.Parent = Title
+    
+    local VersionBadge = Instance.new("TextLabel")
+    VersionBadge.Size = UDim2.new(0, 80, 0, 24)
+    VersionBadge.Position = UDim2.new(0.7, 10, 0.5, -12)
+    VersionBadge.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    VersionBadge.Text = "v2.4"
+    VersionBadge.TextColor3 = Color3.fromRGB(180, 255, 180)
+    VersionBadge.TextSize = 12
+    VersionBadge.Font = Enum.Font.Gotham
+    VersionBadge.Parent = TitleBar
+    
+    local VersionCorner = Instance.new("UICorner")
+    VersionCorner.CornerRadius = UDim.new(0, 8)
+    VersionCorner.Parent = VersionBadge
+    
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Size = UDim2.new(0, 34, 0, 34)
+    CloseButton.Position = UDim2.new(1, -42, 0, 8)
+    CloseButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    CloseButton.Text = "×"
+    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseButton.Font = Enum.Font.GothamBold
+    CloseButton.TextSize = 28
+    CloseButton.Parent = TitleBar
+    
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.CornerRadius = UDim.new(0, 8)
+    CloseCorner.Parent = CloseButton
+    
+    local MinimizeButton = Instance.new("TextButton")
+    MinimizeButton.Size = UDim2.new(0, 34, 0, 34)
+    MinimizeButton.Position = UDim2.new(1, -84, 0, 8)
+    MinimizeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    MinimizeButton.Text = "−"
+    MinimizeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+    MinimizeButton.Font = Enum.Font.GothamBold
+    MinimizeButton.TextSize = 28
+    MinimizeButton.Parent = TitleBar
+    
+    local MinCorner = Instance.new("UICorner")
+    MinCorner.CornerRadius = UDim.new(0, 8)
+    MinCorner.Parent = MinimizeButton
+    
+    local Content = Instance.new("Frame")
+    Content.Name = "Content"
+    Content.Size = UDim2.new(1, 0, 1, -50)
+    Content.Position = UDim2.new(0, 0, 0, 50)
+    Content.BackgroundTransparency = 1
+    Content.Parent = MainFrame
+    
+    local minimized = false
+    local originalSizeY = 700
+    
+    MinimizeButton.MouseButton1Click:Connect(function()
+        minimized = not minimized
+        if minimized then
+            MainFrame.Size = UDim2.new(0, 400, 0, 50)
+            MinimizeButton.Text = "+"
+            MinimizeButton.TextColor3 = Color3.fromRGB(100, 255, 100)
+            Content.Visible = false
+        else
+            MainFrame.Size = UDim2.new(0, 400, 0, originalSizeY)
+            MinimizeButton.Text = "−"
+            MinimizeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+            Content.Visible = true
+        end
+    end)
+    
+    CloseButton.MouseButton1Click:Connect(function()
+        if auraConnection then auraConnection:Disconnect() end
+        if antiRagdollConnection then antiRagdollConnection:Disconnect() end
+        if antiFlingConnection then antiFlingConnection:Disconnect() end
+        ScreenGui:Destroy()
+    end)
+    
+    local dragging, dragInput, dragStart, startPos
+    TitleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+        end
+    end)
+    
+    TitleBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input == dragInput then
+            local delta = input.Position - dragStart
+            MainFrame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    if player:FindFirstChild("PlayerGui") then
+        ScreenGui.Parent = player.PlayerGui
+    else
+        player:WaitForChild("PlayerGui")
+        ScreenGui.Parent = player.PlayerGui
+    end
+    
+    return Content, ScreenGui
+end
+
+-- ==================== PROFESSIONAL CONTROL CREATORS ====================
+local function CreateToggleButton(parent, text, yPosition)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0.9, 0, 0, 50)
+    button.Position = UDim2.new(0.05, 0, yPosition, 0)
+    button.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    button.Text = text
+    button.TextColor3 = Color3.fromRGB(255, 80, 80)
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 18
+    button.Parent = parent
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = button
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Thickness = 2
+    stroke.Parent = button
+    
+    return button
+end
+
+local function CreateSlider(parent, labelText, minValue, maxValue, defaultValue, yPosition, valueChangedCallback)
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Name = "SliderFrame"
+    sliderFrame.Size = UDim2.new(0.9, 0, 0, 60)
+    sliderFrame.Position = UDim2.new(0.05, 0, yPosition, 0)
+    sliderFrame.BackgroundTransparency = 1
+    sliderFrame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 20)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = sliderFrame
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0.2, 0, 0, 20)
+    valueLabel.Position = UDim2.new(0.8, 0, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(defaultValue)
+    valueLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.Parent = sliderFrame
+    
+    local sliderContainer = Instance.new("Frame")
+    sliderContainer.Size = UDim2.new(1, 0, 0, 30)
+    sliderContainer.Position = UDim2.new(0, 0, 0, 25)
+    sliderContainer.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    sliderContainer.Parent = sliderFrame
+    
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 8)
+    sliderCorner.Parent = sliderContainer
+    
+    local sliderTrack = Instance.new("Frame")
+    sliderTrack.Size = UDim2.new(0.9, 0, 0, 6)
+    sliderTrack.Position = UDim2.new(0.05, 0, 0.5, -3)
+    sliderTrack.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    sliderTrack.Parent = sliderContainer
+    
+    local trackCorner = Instance.new("UICorner")
+    trackCorner.CornerRadius = UDim.new(1, 0)
+    trackCorner.Parent = sliderTrack
+    
+    local sliderThumb = Instance.new("Frame")
+    sliderThumb.Size = UDim2.new(0, 22, 0, 22)
+    sliderThumb.Position = UDim2.new((defaultValue - minValue) / (maxValue - minValue), -11, 0.5, -11)
+    sliderThumb.BackgroundColor3 = Color3.fromRGB(80, 180, 255)
+    sliderThumb.Parent = sliderContainer
+    
+    local thumbCorner = Instance.new("UICorner")
+    thumbCorner.CornerRadius = UDim.new(1, 0)
+    thumbCorner.Parent = sliderThumb
+    
+    local currentValue = defaultValue
+    local draggingSlider = false
+    
+    local function updateSlider(value)
+        currentValue = math.clamp(value, minValue, maxValue)
+        local percentage = (currentValue - minValue) / (maxValue - minValue)
+        
+        sliderThumb.Position = UDim2.new(percentage, -11, 0.5, -11)
+        valueLabel.Text = tostring(math.floor(currentValue))
+        
+        if valueChangedCallback then
+            valueChangedCallback(currentValue)
+        end
+    end
+    
+    sliderThumb.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = true
+        end
+    end)
+    
+    sliderContainer.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = true
+            local clickPos = input.Position.X - sliderContainer.AbsolutePosition.X
+            local trackStart = sliderTrack.AbsolutePosition.X - sliderContainer.AbsolutePosition.X
+            local trackEnd = trackStart + sliderTrack.AbsoluteSize.X
+            
+            if clickPos >= trackStart and clickPos <= trackEnd then
+                local percentage = (clickPos - trackStart) / sliderTrack.AbsoluteSize.X
+                local newValue = minValue + (percentage * (maxValue - minValue))
+                updateSlider(newValue)
+            end
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = input.Position
+            local containerPos = sliderContainer.AbsolutePosition
+            local trackStart = sliderTrack.AbsolutePosition.X - containerPos.X
+            local trackWidth = sliderTrack.AbsoluteSize.X
+            
+            local relativeX = mousePos.X - containerPos.X
+            local percentage = (relativeX - trackStart) / trackWidth
+            percentage = math.clamp(percentage, 0, 1)
+            
+            local newValue = minValue + (percentage * (maxValue - minValue))
+            updateSlider(newValue)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = false
+        end
+    end)
+    
+    updateSlider(defaultValue)
+    
+    return sliderFrame
+end
+
+-- FIXED: CreateTextBox now properly sets PlaceholderText
+local function CreateTextBox(parent, placeholderText, yPosition, textChangedCallback)
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0.9, 0, 0, 40)
+    container.Position = UDim2.new(0.05, 0, yPosition, 0)
+    container.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    container.Parent = parent
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = container
+    
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, -20, 1, -10)
+    textBox.Position = UDim2.new(0, 10, 0, 5)
+    textBox.BackgroundTransparency = 1
+    textBox.Text = ""
+    textBox.PlaceholderText = placeholderText  -- THIS WAS THE FIX
+    textBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 150)
+    textBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+    textBox.Font = Enum.Font.Gotham
+    textBox.TextSize = 14
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = container
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Thickness = 1
+    stroke.Parent = container
+    
+    textBox.FocusLost:Connect(function(enterPressed)
+        if textChangedCallback then
+            textChangedCallback(textBox.Text)
+        end
+    end)
+    
+    return textBox
+end
+
+-- ==================== MAIN GUI SETUP ====================
+local content, screenGui = CreateProfessionalGUI()
+
+local toggleButton = CreateToggleButton(content, "⚡ SCRIPT: OFF", 0.02)
+toggleButton.TextColor3 = Color3.fromRGB(255, 80, 80)
+
+-- Target Players (comma separated) - FIXED placeholder text
+local targetTextBox = CreateTextBox(content, "Target players (comma separated)", 0.12, function(text)
+    targetPlayerNames = text
+    updateTargetList()
+end)
+
+-- NEW: Head Sit Targets (comma separated)
+local headSitTextBox = CreateTextBox(content, "Head sit targets (comma separated)", 0.20, function(text)
+    headSitPlayerNames = text
+    updateHeadSitTargetList()
+end)
+
+-- Avoid Players (comma separated)
+local avoidTextBox = CreateTextBox(content, "Avoid players (comma separated)", 0.28, function(text)
+    avoidPlayerNames = text
+    updateAvoidList()
+end)
+
+-- APS SLIDER
+local apsSlider = CreateSlider(content, "Attacks Per Second:", 0, 5000, 800, 0.36, function(value)
+    attacksPerSecond = value
+    attackCooldown = 0 / attacksPerSecond
+end)
+
+-- Range SLIDER
+local rangeSlider = CreateSlider(content, "Attack Range (studs):", 0, 650, 80, 0.48, function(value)
+    attackRange = value
+end)
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0.9, 0, 0, 40)
+statusLabel.Position = UDim2.new(0.05, 0, 0.60, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: Ready"
+statusLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 14
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = content
+
+local statsLabel = Instance.new("TextLabel")
+statsLabel.Size = UDim2.new(0.9, 0, 0, 90)
+statsLabel.Position = UDim2.new(0.05, 0, 0.68, 0)
+statsLabel.BackgroundTransparency = 1
+statsLabel.Text = "APS: 400\nRange: 50\nAnti-Ragdoll: OFF\nAnti-Fling: OFF\nTarget: All\nHead: None\nAvoid: None"
+statsLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+statsLabel.Font = Enum.Font.Gotham
+statsLabel.TextSize = 12
+statsLabel.TextXAlignment = Enum.TextXAlignment.Left
+statsLabel.TextYAlignment = Enum.TextYAlignment.Top
+statsLabel.TextWrapped = true
+statsLabel.Parent = content
+
+local keybindLabel = Instance.new("TextLabel")
+keybindLabel.Size = UDim2.new(0.9, 0, 0, 30)
+keybindLabel.Position = UDim2.new(0.05, 0, 0.85, 0)
+keybindLabel.BackgroundTransparency = 1
+keybindLabel.Text = "Toggle Key: E"
+keybindLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+keybindLabel.Font = Enum.Font.GothamBold
+keybindLabel.TextSize = 14
+keybindLabel.TextXAlignment = Enum.TextXAlignment.Left
+keybindLabel.Parent = content
+
+local warningLabel = Instance.new("TextLabel")
+warningLabel.Size = UDim2.new(0.9, 0, 0, 50)
+warningLabel.Position = UDim2.new(0.05, 0, 0.90, 0)
+warningLabel.BackgroundTransparency = 1
+warningLabel.Text = "⚡ SIMULTANEOUS HITS\n👤 HEAD SIT (separate targets)\n🛡️ ANTI-RAGDOLL + AVOID PLAYERS"
+warningLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+warningLabel.Font = Enum.Font.Gotham
+warningLabel.TextSize = 11
+warningLabel.TextXAlignment = Enum.TextXAlignment.Left
+warningLabel.TextWrapped = true
+warningLabel.Parent = content
+
+local footerLabel = Instance.new("TextLabel")
+footerLabel.Size = UDim2.new(0.9, 0, 0, 20)
+footerLabel.Position = UDim2.new(0.05, 0, 0.97, 0)
+footerLabel.BackgroundTransparency = 1
+footerLabel.Text = "XYRO 4X FASTER v4.2 | Press E to toggle"
+footerLabel.TextColor3 = Color3.fromRGB(100, 100, 100)
+footerLabel.Font = Enum.Font.Gotham
+footerLabel.TextSize = 10
+footerLabel.TextXAlignment = Enum.TextXAlignment.Center
+footerLabel.Parent = content
+
+-- ==================== TARGETING LOGIC ====================
+local function isPlayerTarget(playerObj)
+    if playerObj == player then return false end
+    
+    local playerNameLower = playerObj.Name:lower()
+    local displayNameLower = playerObj.DisplayName:lower()
+    
+    -- Skip if in avoid list
+    if avoidList[playerNameLower] or avoidList[displayNameLower] then
+        return false
+    end
+    
+    -- If no specific targets, target all (except avoided players)
+    if targetPlayerNames == "" then
+        return true
+    end
+    
+    -- Check exact matches
+    if targetList[playerNameLower] or targetList[displayNameLower] then
+        return true
+    end
+    
+    -- Check partial matches
+    for targetName in pairs(targetList) do
+        if playerNameLower:find(targetName, 1, true) or displayNameLower:find(targetName, 1, true) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- NEW: Get head sit target
+local function getHeadSitTarget()
+    if headSitPlayerNames == "" then return nil end
+    
+    for _, playerObj in pairs(Players:GetPlayers()) do
+        if playerObj == player then continue end
+        
+        local playerNameLower = playerObj.Name:lower()
+        local displayNameLower = playerObj.DisplayName:lower()
+        
+        -- Skip if in avoid list
+        if avoidList[playerNameLower] or avoidList[displayNameLower] then
+            continue
+        end
+        
+        -- Check exact matches
+        if headSitTargetList[playerNameLower] or headSitTargetList[displayNameLower] then
+            return playerObj
+        end
+        
+        -- Check partial matches
+        for targetName in pairs(headSitTargetList) do
+            if playerNameLower:find(targetName, 1, true) or displayNameLower:find(targetName, 1, true) then
+                return playerObj
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- ==================== UPDATE STATS ====================
+local function updateStats()
+    local targetText = targetPlayerNames == "" and "All players" or targetPlayerNames
+    local headText = headSitPlayerNames == "" and "None" or headSitPlayerNames
+    local avoidText = avoidPlayerNames == "" and "None" or avoidPlayerNames
+    
+    statsLabel.Text = string.format("APS: %d\nRange: %d\nAnti-Ragdoll: %s\nAnti-Fling: %s\nTarget: %s\nHead: %s\nAvoid: %s", 
+        math.floor(attacksPerSecond), 
+        math.floor(attackRange), 
+        ScriptEnabled and "ON" or "OFF",
+        ScriptEnabled and "ON" or "OFF",
+        targetText,
+        headText,
+        avoidText)
+end
+
+RunService.Heartbeat:Connect(updateStats)
+
+-- ==================== TOGGLE SCRIPT ====================
+local function toggleScript()
+    ScriptEnabled = not ScriptEnabled
+    
+    if ScriptEnabled then
+        toggleButton.Text = "⚡ SCRIPT: ON"
+        toggleButton.TextColor3 = Color3.fromRGB(80, 255, 80)
+        toggleButton.BackgroundColor3 = Color3.fromRGB(40, 70, 40)
+        
+        statusLabel.Text = "Status: Active (Simultaneous + Head Sit)"
+        statusLabel.TextColor3 = Color3.fromRGB(80, 255, 80)
+        
+        setupAntiRagdoll()
+        setupAntiFling()
+        setupGrabFallFixes()
+        ensureCharacterSafety()
+        
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= player and p.Character and isPlayerTarget(p) then
+                local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    originalSizes[hrp] = hrp.Size
+                    hrp.Size = Vector3.new(40, 40, 40)
+                end
+            end
+        end
+        
+        auraConnection = RunService.Heartbeat:Connect(function()
+            if not ScriptEnabled then return end
+            if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+            
+            local currentTime = tick()
+            
+            if currentTime - lastAttackTime < attackCooldown then
+                return
+            end
+            
+            local myHRP = player.Character.HumanoidRootPart
+            
+            -- HEAD SIT
+            local headTarget = getHeadSitTarget()
+            if headTarget and headTarget.Character then
+                local head = headTarget.Character:FindFirstChild("Head")
+                if head and (head.Position - myHRP.Position).Magnitude <= attackRange then
+                    myHRP.CFrame = CFrame.new(head.Position + Vector3.new(0, 3, 0))
+                end
+            end
+            
+            -- KILL AURA - SIMULTANEOUS MODE (Hit ALL targets at once)
+            if targetPlayerNames ~= "" then
+                for _, p in pairs(Players:GetPlayers()) do
+                    if not isPlayerTarget(p) then continue end
+                    if not p.Character then continue end
+                    
+                    local hum = p.Character:FindFirstChild("Humanoid")
+                    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                    
+                    if hum and hrp and hum.Health > 0 then
+                        local dist = (hrp.Position - myHRP.Position).Magnitude
+                        if dist <= attackRange then
+                            local args = {
+                                hum,
+                                vector.create(myHRP.Position.X, myHRP.Position.Y, myHRP.Position.Z)
+                            }
+                            pcall(function()
+                                HitRemote:InvokeServer(unpack(args))
+                            end)
+                        end
+                    end
+                end
+                lastAttackTime = currentTime
+            else
+                -- NORMAL MODE (closest target)
+                local closest = nil
+                local closestDist = attackRange
+                
+                for _, p in pairs(Players:GetPlayers()) do
+                    if not isPlayerTarget(p) then continue end
+                    if not p.Character then continue end
+                    
+                    local hum = p.Character:FindFirstChild("Humanoid")
+                    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                    
+                    if hum and hrp and hum.Health > 0 then
+                        local dist = (hrp.Position - myHRP.Position).Magnitude
+                        if dist <= attackRange and dist < closestDist then
+                            closestDist = dist
+                            closest = p
+                        end
+                    end
+                end
+                
+                if closest and closest.Character and closest.Character:FindFirstChild("Humanoid") then
+                    local args = {
+                        closest.Character.Humanoid,
+                        vector.create(myHRP.Position.X, myHRP.Position.Y, myHRP.Position.Z)
+                    }
+                    pcall(function()
+                        HitRemote:InvokeServer(unpack(args))
+                        lastAttackTime = currentTime
+                    end)
+                end
+            end
+            
+            ensureCharacterSafety()
+        end)
+        
+    else
+        toggleButton.Text = "⚡ SCRIPT: OFF"
+        toggleButton.TextColor3 = Color3.fromRGB(255, 80, 80)
+        toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        
+        statusLabel.Text = "Status: Disabled"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+        
+        if auraConnection then auraConnection:Disconnect() end
+        if antiRagdollConnection then antiRagdollConnection:Disconnect() end
+        if antiFlingConnection then antiFlingConnection:Disconnect() end
+        
+        for hrp, oldSize in pairs(originalSizes) do
+            if hrp and hrp.Parent then
+                hrp.Size = oldSize
+            end
+        end
+        originalSizes = {}
+        lastAttackTime = 0
+    end
+end
+
+toggleButton.MouseButton1Click:Connect(toggleScript)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.E then
+        toggleScript()
+    end
+end)
+
+screenGui.Destroying:Connect(function()
+    if auraConnection then auraConnection:Disconnect() end
+    if antiRagdollConnection then antiRagdollConnection:Disconnect() end
+    if antiFlingConnection then antiFlingConnection:Disconnect() end
+end)
+
+updateTargetList()
+updateHeadSitTargetList()
+updateAvoidList()
+updateStats()
+
+print("==============================================")
+print("XYRO 4X FASTER Kill Aura v4.2")
+print("Loaded Successfully!")
+print("⚡ SIMULTANEOUS HITS - All targets at once")
+print("👤 HEAD SIT - Separate target list")
+print("🛡️ ANTI-RAGDOLL + AVOID PLAYERS")
+print("==============================================")
